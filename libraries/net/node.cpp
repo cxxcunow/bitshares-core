@@ -739,7 +739,7 @@ namespace graphene { namespace net { namespace detail {
         for (const peer_connection_ptr& peer : _active_connections)
         {
           // only advertise to peers who are in sync with us
-           wdump((peer->peer_needs_sync_items_from_us));
+          idump((peer->peer_needs_sync_items_from_us));
           if( !peer->peer_needs_sync_items_from_us )
           {
             std::map<uint32_t, std::vector<item_hash_t> > items_to_advertise_by_type;
@@ -747,13 +747,13 @@ namespace graphene { namespace net { namespace detail {
             // or anything it has advertised to us
             // group the items we need to send by type, because we'll need to send one inventory message per type
             unsigned total_items_to_send_to_this_peer = 0;
-            wdump((inventory_to_advertise));
+            idump((inventory_to_advertise));
             for (const item_id& item_to_advertise : inventory_to_advertise)
             {
               if (peer->inventory_advertised_to_peer.find(item_to_advertise) != peer->inventory_advertised_to_peer.end() )
-                 wdump((*peer->inventory_advertised_to_peer.find(item_to_advertise)));
+                 idump((*peer->inventory_advertised_to_peer.find(item_to_advertise)));
               if (peer->inventory_peer_advertised_to_us.find(item_to_advertise) != peer->inventory_peer_advertised_to_us.end() )
-                 wdump((*peer->inventory_peer_advertised_to_us.find(item_to_advertise)));
+                 idump((*peer->inventory_peer_advertised_to_us.find(item_to_advertise)));
 
               if (peer->inventory_advertised_to_peer.find(item_to_advertise) == peer->inventory_advertised_to_peer.end() &&
                   peer->inventory_peer_advertised_to_us.find(item_to_advertise) == peer->inventory_peer_advertised_to_us.end())
@@ -1762,7 +1762,7 @@ namespace graphene { namespace net { namespace detail {
       bool disconnect_from_inhibited_peer = false;
       // if our client doesn't have any items after the item the peer requested, it will send back
       // a list containing the last item the peer requested
-      wdump((reply_message)(fetch_blockchain_item_ids_message_received.blockchain_synopsis));
+      idump((reply_message)(fetch_blockchain_item_ids_message_received.blockchain_synopsis));
       if( reply_message.item_hashes_available.empty() )
         originating_peer->peer_needs_sync_items_from_us = false; /* I have no items in my blockchain */
       else if( !fetch_blockchain_item_ids_message_received.blockchain_synopsis.empty() &&
@@ -2132,32 +2132,32 @@ namespace graphene { namespace net { namespace detail {
           if (!item_hashes_received.empty() && !originating_peer->ids_of_items_to_get.empty())
             assert(item_hashes_received.front() != originating_peer->ids_of_items_to_get.back());
 
+          // at any given time, there's a maximum number of blocks that can possibly be out there
+          // [(now - genesis time) / block interval].  If they offer us more blocks than that,
+          // they must be an attacker or have a buggy client.
+          fc::time_point_sec minimum_time_of_last_offered_block =
+              originating_peer->last_block_time_delegate_has_seen + // timestamp of the block immediately before the first unfetched block
+              originating_peer->number_of_unfetched_item_ids * GRAPHENE_MIN_BLOCK_INTERVAL;
+          fc::time_point_sec now = fc::time_point::now();
+          if (minimum_time_of_last_offered_block > now + GRAPHENE_NET_FUTURE_SYNC_BLOCKS_GRACE_PERIOD_SEC)
+          {
+            wlog("Disconnecting from peer ${peer} who offered us an implausible number of blocks, their last block would be in the future (${timestamp})",
+                 ("peer", originating_peer->get_remote_endpoint())
+                 ("timestamp", minimum_time_of_last_offered_block));
+            fc::exception error_for_peer(FC_LOG_MESSAGE(error, "You offered me a list of more sync blocks than could possibly exist.  Total blocks offered: ${blocks}, Minimum time of the last block you offered: ${minimum_time_of_last_offered_block}, Now: ${now}",
+                                                        ("blocks", originating_peer->number_of_unfetched_item_ids)
+                                                        ("minimum_time_of_last_offered_block", minimum_time_of_last_offered_block)
+                                                        ("now", now)));
+            disconnect_from_peer(originating_peer,
+                                 "You offered me a list of more sync blocks than could possibly exist",
+                                 true, error_for_peer);
+            return;
+          }
+
           // append the remaining items to the peer's list
           boost::push_back(originating_peer->ids_of_items_to_get, item_hashes_received);
 
           originating_peer->number_of_unfetched_item_ids = blockchain_item_ids_inventory_message_received.total_remaining_item_count;
-
-        // at any given time, there's a maximum number of blocks that can possibly be out there
-        // [(now - genesis time) / block interval].  If they offer us more blocks than that,
-        // they must be an attacker or have a buggy client.
-        fc::time_point_sec minimum_time_of_last_offered_block =
-            originating_peer->last_block_time_delegate_has_seen + // timestamp of the block immediately before the first unfetched block
-            originating_peer->number_of_unfetched_item_ids * GRAPHENE_MIN_BLOCK_INTERVAL;
-        fc::time_point_sec now = fc::time_point::now();
-        if (minimum_time_of_last_offered_block > now + GRAPHENE_NET_FUTURE_SYNC_BLOCKS_GRACE_PERIOD_SEC)
-        {
-          wlog("Disconnecting from peer ${peer} who offered us an implausible number of blocks, their last block would be in the future (${timestamp})",
-               ("peer", originating_peer->get_remote_endpoint())
-               ("timestamp", minimum_time_of_last_offered_block));
-          fc::exception error_for_peer(FC_LOG_MESSAGE(error, "You offered me a list of more sync blocks than could possibly exist.  Total blocks offered: ${blocks}, Minimum time of the last block you offered: ${minimum_time_of_last_offered_block}, Now: ${now}",
-                                                      ("blocks", originating_peer->number_of_unfetched_item_ids)
-                                                      ("minimum_time_of_last_offered_block", minimum_time_of_last_offered_block)
-                                                      ("now", now)));
-          disconnect_from_peer(originating_peer,
-                               "You offered me a list of more sync blocks than could possibly exist",
-                               true, error_for_peer);
-          return;
-        }
 
           uint32_t new_number_of_unfetched_items = calculate_unsynced_block_count_from_all_peers();
           if (new_number_of_unfetched_items != _total_number_of_unfetched_items)
@@ -2418,7 +2418,7 @@ namespace graphene { namespace net { namespace detail {
 
       if( closing_connection_message_received.closing_due_to_error )
       {
-        elog( "Peer ${peer} is disconnecting us because of an error: ${msg}, exception: ${error}",
+        wlog( "Peer ${peer} is disconnecting us because of an error: ${msg}, exception: ${error}",
              ( "peer", originating_peer->get_remote_endpoint() )
              ( "msg", closing_connection_message_received.reason_for_closing )
              ( "error", closing_connection_message_received.error ) );
